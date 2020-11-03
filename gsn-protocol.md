@@ -8,6 +8,7 @@ category: ERC
 created: 2020-09-16
 ---
 
+# The GSN (Gas Stations Network) Protocol
 ## Simple Summary
 
 A Decentralized Meta-Transaction framework to let non-ether users to make
@@ -55,13 +56,14 @@ In particular
 
 ## Definitions
 
-* `Client` - an etherless account that attempt to make a call, without paying for gas
+* `Client` or `Sender` - an external account that attempt to make a call, without paying for gas
 * `RelayRecipient` - the contract that receives the relayed call from the client.
 * `Relayer` - a server that relays the request from the client to the recipient. 
-    The relayer pays for the gas, but ultimately gets reimbursed for it (with a fee)
+    The relayer pays for the gas, but ultimately gets reimbursed for it (with a fee) from a Paymaster.
 * `Paymaster` - a contract that pays for the actual transaction to the Relayer.
 * `RelayHub` - a singleton that mediates the calls.
 * `Forwarder` - a component to validate user's request, by checking the signature and nonce of a request.
+
 
 ### Internal Components
 
@@ -72,7 +74,6 @@ In particular
 The relayer is built from two (or more) distinct accounts:
 * `RelayManager` - the account the "defines" the relayer (and hold a stake)    
 * `RelayWorker` - actual relayer address that sends a request. a relayer has one or more workers    
-
 ## Specification
 
 Roles of the `Forwarder`:
@@ -131,102 +132,158 @@ Implementing a `Paymaster`
   These two methods can be used to charge the user in paymaster-specific manner.
   (e.g. transfer some tokens from the user in the `preRelayedCall`, and refund the excess in the `postRelayedCall`) 
 
-Glossary of terms used in the processes below:
 
-* `RelayHub` - the RelayHub singleton contract, used by everyone.
-* `Recipient` - a contract implementing `RelayRecipient`, accepting relayed transactions from the RelayHub contract and paying for the incoming transactions.
-* `Sender` - an external address with a valid key pair but no ETH to pay for gas.
-* `Relayer` - a node holding ETH in an external address, listed in RelayHub and relaying transactions from Senders to RelayHub for a fee.
-
-![Sequence Diagram](/assets/eip-1613/sequence.png)
+![Sequence Diagram](https://www.websequencediagrams.com/cgi-bin/cdraw?lz=dGl0bGUgR1NOCnBhcnRpY2lwYW50IGNsaWVudAAGDVJlbGF5XG5Pd25lciBhcyBvd25lcgAQElNlcnYAGwZyZWxheQAxEkh1YiBhcyBodWIAZQ1TdGFrZU1hbmFnAFkGc20Kb3B0IHNldHVwAEQHCgoAbwUtPnNtOiAxLiBzdGFrZUZvckFkZHJlc3MoAGwFKQAZDDIuIGF1dGhvcml6ZUh1YkJ5AIE5BShodWIAHglodWI6IDMuIHJlZ2lzdGVyAIE6CwBJCGh1YgBuBjQuIGlzAIIDBQCBIgcAgTAFZABqDwBNBTUuIGFkZACCLwVXb3JrZXIAgRgHLHcACQUpCmVuZAoAgV0FbWFraW5nIGEgY2FsbABnBS0-AIJ5BjogNi4gZXZlbnQ6AD4LQWRkZWQKCgCDHAYtPgCCYQU6AIJnBkNhbGwKAIJyBQCBUQc3LgAOCwCBPgk4AIEpHgCBagVwACIGIHByZQCDdAVlZAA6CmZvcndhcmRlcgBGBWV4ZWN1dGUKbm90ZSBvdmVyIAASDnZlcmlmeVNpZ1xuAAUGTm9uY2UKADwJLT5yZWNpcACBawY4LiB0YXJnZXQtAIIJBWFjdGl2YXRlIAAaCQCBEQ1wb3N0AIESDGRlABoXAIJIClRyYW5zYWN0aW9uAIFRBwCDBAY&s=rose)
 
 The process of registering/refreshing a `Relayer`:
 
 * Relayer starts listening as a web app (or on some other communication channel).
-* If starting for the first time (no key yet), generate a key pair for Relayer's **manager** and **worker** addresss.
+* If starting for the first time (no key yet), generate a key pair for Relayer's **manager** and **worker** addresses.
 * The Relayer's owner should fund the manager address with some eth.
 * Relayer's owner sends the required stake to `StakeManager` by calling `StakeManager.stakeForAddress(address relay, uint unstakeDelay)`.
-* Relayer's owner should call `StakeManager.authorizeHubByOwner`
-* `RelayHub` verifies the relayer has a stake and authorization in the StakeManager.
-* Relay calls `RelayHub.registerRelayServer(baseFee, pctFee, url)` with the relay's `transaction fee` (as a base fee and a multiplier on transaction gas cost), and a URL for incoming transactions. 
-* `RelayHub` ensures that Relay has a sufficient stake in the `StakeManager.
+* Relayer's owner calls `StakeManager.authorizeHubByOwner(relayManager,relayHub)`
+* Relay calls `RelayHub.registerRelayServer(baseFee, pctFee, url)` with the relayer's configured `transaction fee` (as a base fee and a multiplier on transaction gas cost), and a URL for incoming transactions. 
+* `RelayHub` ensures that Relayer has an authorization and sufficient stake in the `StakeManager`.
 * `RelayHub` emits an event, `RelayAdded(Relay, owner, transactionFee, relayStake, unstakeDelay, url)`.
 * `Relayer` goes to sleep and waits for signing requests.
+
+The process of winding a `Relayer` down:
+
+* Relayer's owner (the address that initially funded it) calls `StakeManager.unlockStake(relayManager)`.
+* The StakeManager validates its the actual owner, and it does have a stake.
+* From that point, no transaction can go through this relayer.
+* Once the owner's unstake delay is over, owner calls `RelayHub.unstake()`, and withdraws the stake.
+* The relayer should stop the `Relay` shuts down.
+
+The process of moving `Relayer` to a new RelayHub:
+
+* The same RelayManager (but not relay workers!) can be used by multiple Hubs (e.g, when switching to a new hub version, and relay owner
+  would like to give service through both the old hub and new hub, without requiring to add new stake.
+* the Relayer is brought up with the new RelayHub (with the registering process above, but without re-staking)
+* When the old RelayHub is no longer in use, the owner should call `StakeManager.unauthorizeHubByOwner(relayManager,relayHub)`
+* The StakeManager will remove the authorization, and the relayManager will no longer be able to process requests by this RelayHub.
+* When receiving the "HubUnauthorized" events, the Relayer will start a countdown of the unstake-delay.
+* Only after this countdown is over, it will transfer the eth balance of the relay workers to the manager (before the time, the "transfer eth" operation balance can cause the relayer to be penalizeable)
+* The client lookup mechanism filters out relayers for which a "HubUnauthorized" event was sent
 
 The process of sending a relayed transaction:
 
 * `Sender` selects a live `Relay` from RelayHub's list by looking at events from `RelayHub` in the past `lookup window`.
-   Each relayer address is saved once.
+   Each relayer address is saved once (that is, a relayer is considred "active" regardless of how many requests it had 
+   processed within the lookup window)
+* The sender may maintain a list of "preferred relayers". These are always moved to the beginning of the list and tried 
+  first, before other relayers (i.e probably dapp-owned relayers)
 * The sender may sort relayers based on its own criteria. Selection may be based on a mix of:
     * Relay published transaction fees.
     * Relay stake size and lock-up time.
     * Recent relay transactions (visible through `TransactionRelayed` events from `RelayHub`).
     * Optionally, reputation/blacklist/whitelist held by the sender app itself, or its backend, on per-app basis (not part of the gas stations network).
-* Sender prepares the transaction with Sender's address, the recipient address, the actual transaction data, Relay's transaction fee, gas price, gas limit, its current nonce from `RelayHub.nonces`, RelayHub's address, and Relay's address, and then signs it.
-* Sender verifies that `RelayHub.balances[recipient]` holds enough ETH to pay Relay's fee.
-* Sender verifies that `Relay.balance` has enough eth to send the transaction
-* Sender reads the Relay's current `nonce` value and decides on the `max_nonce` parameter.
-* Sender sends the signed transaction amd metadata to Relay's web interface.
-* `Relay` wraps the transaction with a transaction to `RelayHub`, with zero ETH value.
-* `Relay` signs the wrapper transaction with its key in order to pay for gas.
-* `Relay` verifies that:
-    * The transaction's recipient contract will accept this transaction when submitted, by calling `RelayHub.canRelay()`, a view function, 
-      which checks the recipient's `acceptRelayedCall`, also a view function, stating whether it's willing to accept the charges).
-    * The transaction nonce matches `RelayHub.nonces[sender]`.
-    * The relay address in the transaction matches Relay's address.
-    * The transaction's recipient has enough ETH deposited in `RelayHub` to pay the transaction fee.
-    * Relay has enough ETH to pay for the gas required by the transaction.
-    * Value of `max_nonce` is higher than current Relay's `nonce`
-* If any of Relay's checks fail, it returns an error to sender, and doesn't proceed.
-* Relay submits the signed wrapped transaction to the blockchain.
-* Relay immediately returns the signed wrapped transaction to the sender.  This step is discussed below, in attacks/mitigations.
+* The Default sorting algorithm is:
+    * preferred relays are always first, in their order from the configuration file.
+    * sort relayers by calculated fee (for this transaction) 
+    * downscore (move to the end of the list) relays that failed this client (see below)
+* To select a relayer to use from the list, the client:
+    * Pick the next 3 relayers (without mixing "preferred" with normal relayers)
+    * send a "ping" request to all of them.
+    * Verify the RelayManager and RelayHub in that ping response
+    * save the RelayWorker address (used below)
+    * Take the first relayer to answer the ping.
+* Sender prepares the transaction with Sender's address, the recipient address, the actual transaction data, Relay's transaction fee, gas price, gas limit, its current nonce from `Forwarder.nonces`, RelayHub's address, and Relay-worker's address, and then signs it.
+* The Sender makes a view-call to `RelayHub.relayCall()`, to make sure the call is valid, and paymaster agrees to pay.
+* The Sender may also make the explicit verifications:
+    * `RelayHub.balances[forwarder]` holds enough ETH to pay Relay's fee.
+    * `RelayWorkder.balance` has enough eth to send the transaction
+* Sender reads the Relay worker's current `nonce` value and decides on the `max_nonce` parameter.
+* Sender sends the signed transaction and metadata to Relayer's web interface.
+* `Relayer` receives the request, and verify the client's request:
+    * the required gasPrice is acceptable by the relayer (too-low gas price might stall this worker for some time)
+    * the next nonce to use is within "nonce_gap" from the nonce of the last mined transaction of this worker.
+* `Relayer` receives the request, and make a view call to `RelayHub.relayCall()`, to verify it will get compensated:
+* The `RelayHub.relayCall` validates (and reverts otherwise) that:
+    * the relay manager is registered and staked.
+    * the sender of the request is indeed a relayWorker of that manager.
+    * the paymaster can pay for the max possible price.
+    * the relayhub provided enough gas to complete the request.
+    * the paymaster's preRelayedCall accepted the call (and didn't revert)
+* If any of Relayer's checks fail, it returns an error to sender, and doesn't proceed.
+* Relayer submits the signed relayCall transaction to the blockchain.
+* Relayer immediately returns the signed relayCall transaction to the sender.  This step is discussed below, in attacks/mitigations.
 * `Sender` receives the wrapped transaction and verifies that:
-    * It's a valid relay call to `RelayHub`. from Relay's address.
-    * The transaction's ethereum nonce matches Relay's current nonce.
-    * The transaction's ethereum nonce is lower than or equal to `max_nonce`.
-    * `Relay` is sufficiently funded to pay for it.
-    * The wrapped transaction is valid and signed by `sender`.
-    * Recipient contract has sufficient funds in `RelayHub.balances` to pay for Relay's fee as stated in the transaction.
-* If any of sender's checks fails, it goes back to selecting a new Relay. Sender may also file a report on the unresponsive relay to its backend or save it locally, to down-sort this relay in future transactions.
+    * It's a valid call to `RelayHub.relayCall`, with its own transaction, from RelayWorker's address.
+    * The transaction's ethereum nonce is within "nonce_gap" from RelayWorker's current nonce.
+    * The `RelayWorker` is sufficiently funded to pay for it.
+* If any of sender's checks fails, it goes back to selecting the next relayer.
+  * As discussed above, this failed relayer is now downscore'd by this sender, so that it will avoid to select it again in future transaction.
 * `Sender` may also submit the raw wrapped transaction to the blockchain without paying for gas, through any Ethereum node. 
   This submission is likely ignored because an identical transaction is already in the network's pending transactions, but no harm in putting it twice, to ensure that it happens. 
   This step is not strictly necessary, for reasons discussed below in attacks/mitigations, but may speed things up.
 * `Sender` monitors the blockchain, waiting for the transaction to be mined. 
-  The transaction was verified, with Relay's current nonce, so mining must be successful unless Relay submitted another (different) transaction with the same nonce. 
-  If mining fails due to such attack, sender may call `RelayHub.penalizeRepeatedNonce` through another relay, to collect his reward and burn the remainder of the offending relay's stake, and then go back to selecting a new Relay for the transaction. 
+  The transaction was verified, with Relayer's current nonce, so mining must be successful unless Relayer submitted another (different) transaction with the same nonce. 
+* If mining fails due to such attack, sender may call `RelayHub.penalizeRepeatedNonce` through another relay, to collect his reward and burn the remainder of the offending relay's stake, and then go back to selecting a new Relayer for the transaction. 
   See discussion in the attacks/mitigations section below.
 * `RelayHub` receives the transaction:
-    * Records `gasleft()` as `initialGas` for later payment.
-    * Verifies the transaction is sent from a registered relay.
-    * Verifies that the signature of the internal transaction matches its stated origin (sender's key).
-    * Verifies that the relay address written in the transaction matches msg.sender.
-    * Verifies that the transaction's `nonce` matches the stated origin's nonce in `RelayHub.nonces`.
-    * Calls recipient's `acceptRelayedCall` function, asking whether it's going to accept the transaction. If not, the `TransactionRelayed` will be emitted with status `CanRelayFailed`, and `chargeOrCanRelayStatus` will contain the return value of `acceptRelayedCall`. In this case, Relay doesn't get paid, as it was its responsibility to check `RelayHub.canRelay` before releasing the transaction.
-    * Calls recipient's `preRelayedCall` function. If this call reverts the `TransactionRelayed` will be emitted with status `PreRelayedFailed`.
-    * Sends the transaction to the recipient.  If this call reverts the `TransactionRelayed` will be emitted with status `RelayedCallFailed`.
-      When passing gas to `call()`, enough gas is preserved by `RelayHub`, for post-call handling. Recipient may run out of gas, but `RelayHub` never does. 
-      `RelayHub` also sends sender's address at the end of `msg.data`, so `RelayRecipient.getSender()` will be able to extract the real sender, and trust it because the transaction came from the known `RelayHub` address.
-* Recipient contract handles the transaction.
-* `RelayHub` calls recipient's `postRelayedCall`.
-* `RelayHub` checks call's return value of call, and emits `TransactionRelayed(address relay, address from, address to, bytes4 selector, uint256 status, uint256 chargeOrCanRelayStatus)`.
-* `RelayHub` increases `RelayHub.nonces[sender]`.
-* `RelayHub` transfers ETH balance from recipient to `Relay.owner`, to pay the transaction fee, based on the measured transaction cost. 
-  Note on relay payment: The relay gets paid for actual gas used, regardless of whether the recipient reverted. 
-  The only case where the relay sustains a loss, is if `canRelay` returns non-zero, since the relay was responsible to verify this view function prior to submitting. 
-  Any other revert is caught and paid for. See attacks/mitigations below.
-* `Relay` keeps track of transactions it sent, and waits for `TransactionRelayed` events to see the charge. 
-  If a transaction reverts and goes unpaid, which means the recipient's `acceptRelayedCall()` function was inconsistent, `Relay` refuses service to that recipient for a while (or blacklists it indefinitely, if it happens often). 
-  See attacks/mitigations below.
+    * Verifies the transaction is sent from a worker of a registered relay, and that's the same worker signed in the transaction.
+    * Verifies the tx.gasPrice is at least as the request gasPrice
+    * Verifies the given acceptanceBudget is above paymaster's acceptanceBudget (since #AcceptanceBudget section
+    * Verifies the transaction is given enough gas to cover all gas limits (preRelayedCall, actual call and postRelayedCall)
+    * Verifies the paymaster can pay for the max possible price of the transaction
+    * Makes a call to `paymaster.preRelayedCall`, to make sure it accepts the request
+      * the paymaster makes sure it trusts the forwarder of the request.
+      * the paymaster then performs its other validations.
+    * In case the paymaster reverts, a "TransactionRejectedByPaymaster" is emitted.
+    * The RelayHub sends the transaction to the recipient through the forwarder.
+      The forwarder verifies the nonce and signature, and then call the target recipient.
+      When passing gas to `Forwrader.execute()`, enough gas is preserved by `RelayHub`, for post-call handling. Recipient may run out of gas, but `RelayHub` never does. 
+    * The `Forwarder` verifies the signature of the sender, and that the nonce is correct, and increment the nonce.
+    * The `Forwarder` makes a call to the recipient, after appending the sender's address at the end of the msg.data. This way, the recipient is assumed that when it receives a call through the Forwarder, it knows for sure the `msg.sender` is passed as the last 20 bytes of the **msg.data**.
+    * Recipient contract handles the transaction.
+    * `RelayHub` calls paymaster's `postRelayedCall`.
+    * `RelayHub` checks call's return value of call, and emits `TransactionRelayed(address relay, address from, address to, bytes4 selector, uint256 status, uint256 chargeOrCanRelayStatus)`.
+    * `RelayHub` transfers ETH balance from paymaster to `RelayManager`, to pay the transaction fee, based on the measured transaction cost. 
 
-The process of winding a `Relay` down:
+* `Relayer` keeps track of sent transactions. If the transaction doesn't get mined, it should boost it by putting a higher gas price.
+  Any other modification to the transaction is not allowed, and is considered a violation of the protocol, for which the relayer will get penalized.
+  Note that without boosting it, the relayWorker is blocked, and can't send other transactions.
 
-* Relay's owner (the address that initially funded it) calls `RelayHub.removeRelayByOwner(Relay)`.
-* `RelayHub` ensures that the sender is indeed Relay's owner, then removes `Relay`, and emits `RelayRemoved(Relay)`.
-* `RelayHub` starts the countdown towards releasing the owner's stake.
-* `Relay` receives its `RelayRemoved` event.
-* `Relay` sends all its remaining ETH to its owner.
-* `Relay` shuts down.
-* Once the owner's unstake delay is over, owner calls `RelayHub.unstake()`, and withdraws the stake.
+### Handling of "unstable" transaction
+
+The GSN protocol is based on an assumption of the client (and then of the relayer) that running a transaction in view mode will get the same result as running it on-chain.
+The relayer trusts that if the view call succeeds, its OK to put it on-chain and it will refund the relayer for the transaction cost.
+However, it is possible to write contracts (paymaster or recipient) that will cause a transaction to be "unstable", and thus succeed off-chain and later fail on-chain. In such a case, the relayer will suffer a loss of funds.
+
+Examples of such "unstable" cases (but definitely not the only cases):
+1. require(block.number % 1 == 0) - this naive code will "randomly" fail.
+2. parallel sending the same transaction to multiple relays at the same time: obviously, one will succeed, and the other will fail (since the sender's nonce in the forwarder was modified by the first call) 
+
+Note that in either case, the attack is not "free": in the first case, there is a change that it gets through anyway. In the latter case, one transaction gets paid, so the attack "cost" is higher than the actual damage to each relayer (though in total, it can be higher)
+
+The GSN protocol contains several mechanisms to mitigate such cases:
+1. **AcceptanceBudget**: For any given transaction, the Relayer risks at most "acceptanceBudget" of gas, and it is guaranteed to be refunded for paymaster rejects with higher gas usage. The Paymaster advertises (through Paymaster.getLimits()) its acceptanceBudget. The default of 150k is enough for most but extreme cases (such as zero-knowledge-based mixers)
+Note that by "paymaster reject" we count both preRelayedCall's gas usage AND forwarder's check for signature and nonce. Since forwarder's checks take \~30kgas, the default preRelayedCallGasLimit was set to 100k, so that both are below the 150kgas acceptanceBudget.
+
+Note that if the Relayer's owner knows the Paymaster code and trust it to be "stable" (which also means the trusted Forwrader is "stable"), then it can allow for higher acceptanceBudget
+
+
+2. **AlertingMode**: this is a mechanism to help the relayer mitigate the 2nd unstable case, above: When the relayer detects an event "TransactionRejectedByPaymasterEvent", it knows it is probably because of parallel sending of such transaction. In alerted mode, the relayer waits a random time before sending the transaction. This way, there is a chance that the other relayer that was given this transaction will send it first, and this relayer will be able to see it (on-chain or in the mempool), and avoid re-sending the same TX.
+
+
+## Types of Paymasters
+
+A Paymaster is the on-chain entity that verifies the request and ultimately pays for the transaction.
+One important aspect of the paymaster is that it has to block greifing attempts.
+
+We see several types of Paymasters:
+1. Test-Only EverythingAccepted - the most naive paymaster, which simply accept requests. It can only be used on testnets, as it will
+  be immediately grief by wily hackers.
+
+2. Whitelisting - In case the senders are known, the paymaster can whitelist the sender addresses it accepts. This is good if you already have an on-chain repository of known addresses (e.g, a DAO may pay for voting by the DAO participants)
+
+3. Off-chain verification - in many cases, an off-chain mechanism for user verification can be used, such as OUath, Email, SMS, Captcha, etc. In this case, the off-chain service will perform a verification, and sign the request. The on-chain Paymaster will receive that signature as `approvalData`. The only thing the on-chain paymaster need is to know what signer addresses it supports.
+
+4. Off-chain payment - a special case of the off-chain verification is "pay for gas": use a payment service (such as stripe or paypal), and sign the request, to be checked by the paymaster.
+
+5. Pay-with-token - a paymaster that manages the balance of a user, and deduct the transation cost. While the user doesn't need to have ETH, he does need to have the right token, which means need to set an approval for the paymaster to manage it.
+
 
 ## Rationale
 The rationale for the gas stations network design is a combination of two sets of requirements: Easy adoption, and robustness.
@@ -250,10 +307,10 @@ Specifically we've considered the following types of attacks:
 ##### Attack: Relay attempts to censor a transaction by not signing it, or otherwise ignoring a user request.
 Relay is expected to return the signed transaction to the sender, immediately. 
 Sender doesn't need to wait for the transaction to be mined, and knows immediately whether it's request has been served. 
-If a relay doesn't return a signed transaction within a couple of seconds, sender cancels the operation, drops the connection, and switches to another relay. 
+If a relay doesn't return a signed transaction within few seconds, sender cancels the operation, drops the connection, and switches to another relay. 
 It also marks Relay as unresponsive in its private storage to avoid using it in the near future.
 
-Therefore, the maximal damage a relay can cause with such attack, is a one-time delay of a couple of seconds. After a while, senders will avoid it altogether.
+Therefore, the maximal damage a relay can cause with such attack, is a one-time delay of few seconds. After a while, senders will avoid it altogether.
 
 ##### Attack: Relay attempts to censor a transaction by signing it, returning it to the sender, but never putting it on the blockchain.
 This attack will backfire and not censor the transaction. 
@@ -261,7 +318,7 @@ The sender can submit the transaction signed by Relay to the blockchain as a raw
 but Relay may be unaware and therefore be stuck with a bad nonce which will break its next transaction.
 
 ##### Attack: Relay attempts to censor a transaction by signing it, but publishing a different transaction with the same nonce.
-Reusing the nonce is the only DoS performed by a Relay, that cannot be detected within a couple of seconds during the http request. 
+Reusing the nonce is the only DoS performed by a Relay, that cannot be detected within few seconds during the http request. 
 It will only be detected when the malicious transaction with the same nonce gets mined and triggers the `RelayHub.TransactionRelayed` event. 
 However, the attack will backfire and cost Relay its entire stake.
 
@@ -281,31 +338,32 @@ It is suggested to be higher by 2-3 from current nonce, to allow the relay proce
 
 When the sender receives a transaction signed by a Relay he validates that the nonce used is valid, and if it is not, the client will ignore the given relay and use other relays to relay given transaction. Therefore, there will be no actual delay introduced by such attack.
 
-##### Attack: Dapp attempts to burn relays funds by implementing an inconsistent acceptRelayedCall() and using multiple sender addresses to generate expensive transactions, thus performing a DoS attack on relays and reducing their profitability.
-In this attack, a contract sets an inconsistent acceptRelayedCall (e.g. return zero for even blocks, nonzero for odd blocks), and uses it to exhaust relay resources through unpaid transactions. 
+##### Attack: Paymaster attempts to burn relays funds by implementing an inconsistent preRelayedCall() and using multiple sender addresses to generate expensive transactions, thus performing a DoS attack on relays and reducing their profitability.
+In this attack, a contract sets an inconsistent preRelayedCall (e.g. revert on even blocks), and uses it to exhaust relay resources through unpaid transactions. 
 Relays can easily detect it after the fact. 
-If a transaction goes unpaid, the relay knows that the recipient contract's acceptRelayedCall has acted inconsistently, because the relay has verified its view function before sending the transaction. 
-It might be the result of a rare race condition where the contract's state has changed between the view call and the transaction, but if it happens too frequently, relays will blacklist this contract and refuse to serve transactions to it. 
-Each offending contract can only cause a small damage (e.g. the cost of 2-3 transactions) to a relay, before getting blacklisted.
+If a transaction goes unpaid, the relay knows that the Paymaster contract's preRelayedCall has acted inconsistently, because the relay has verified its view function before sending the transaction. 
+It might be the result of a rare race condition where the contract's state has changed between the view call and the transaction, but if it happens too frequently, relays will blacklist this paymaster and refuse to serve transactions to it. 
+Each offending paymaster can only cause a small damage (e.g. the cost of 2-3 transactions) to a relay, before getting blacklisted.
 
-Relays may also look at recipients' history on the blockchain, looking for past unpaid transactions (reverted by RelayHub without pay), and denying service to contracts with a high failure rate. 
+Relays may also look at paymaster's history on the blockchain, looking for past unpaid transactions (reverted by RelayHub without pay), and denying service to contracts with a high failure rate. 
 If a contract caused this minor loss to a few relays, all relays will stop serving it, so it can't cause further damage.
 
 This attack doesn't scale because the cost of creating a malicious contract is in the same order of magnitude as the damage it can cause to the network. 
 Causing enough damage to exhaust the resources of all relays, would be prohibitively expensive.
 
-The attack can be made even more impractical by setting RelayHub to require a stake from dapps before they can be served, and enforcing an unstaking delay, 
+The attack can be made even more impractical by setting RelayHub to require a stake from paymasters before they can be served, and enforcing an unstaking delay, 
 so that attackers will have to raise a vast amount of ETH in order to simultaneously create enough malicious contracts and attack relays. 
+
 This protection is probably an overkill, since the attack doesn't scale regardless.
 
 ##### Attack: User attempts to rob dapps by registering its own relay and sending expensive transactions to dapps.
-If a malicious sender repeatedly abuses a recipient by sending meaningless/reverted transactions and causing the recipient to pay a relay for nothing, 
-it is the recipient's responsibility to blacklist that sender and have its acceptRelayedCall function return nonzero for that sender. 
+If a malicious sender repeatedly abuses a paymaster by sending meaningless/reverted transactions and causing the paymaster to pay a relay for nothing, 
+it is the paymaster's responsibility to blacklist that sender and have its preRelayedCall function revert for that sender. 
 Collect calls are generally not meant for anonymous senders unknown to the recipient. 
 Dapps that utilize the gas station networks should have a way to blacklist malicious users in their system and prevent Sybil attacks.
 
 A simple method that mitigates such Sybil attack, is that the dapp lets users buy credit with a credit card, and credit their account in the dapp contract, 
-so acceptRelayedCall() only returns zero for users that have enough credit, and deduct the amount paid to the relay from the user's balance, whenever a transaction is relayed for the user. 
+so preRelayedCall() only succeeds for users that have enough credit, and deduct the amount paid to the relay from the user's balance, whenever a transaction is relayed for the user. 
 With this method, the attacker can only burn its own resources, not the dapp's.
 
 A variation of this method, for free dapps (that don't charge the user, and prefer to pay for their users transactions) is to require a captcha during user creation in their web interface, 
@@ -343,7 +401,7 @@ Dapps adding gas station network support remain backwards compatible with their 
 
 ## Implementation
 
-A working implementation of the [**gas stations network**](https://github.com/tabookey-dev/tabookey-gasless) is being developed by **TabooKey**. It consists of `RelayHub`, `RelayRecipient`, `web3 hooks`, an implementation of a gas station inside `geth`, and sample dapps using the gas stations network.
+A working implementation of the [**gas stations network**](https://github.com/opengsn/gsn) is being developed by **OpenGsn**. 
 
 ## Copyright
 Copyright and related rights waived via [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
