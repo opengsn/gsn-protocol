@@ -1,12 +1,14 @@
+```
 ---
 eip: 
-title: Gas Stations Network v2
+title: Gas Stations Network Protocol v2
 author: Yoav Weiss <yoav@opengsn.org>, Dror Tirosh <dror@opengsn.org>, Alex Forshtat <alex@opengsn.org>
 status: Draft
 type: Standards Track
 category: ERC
 created: 2020-09-16
 ---
+```
 
 # The GSN (Gas Stations Network) Protocol
 ## Simple Summary
@@ -19,6 +21,9 @@ Incentivize nodes to run "gas stations" or "relayers" to facilitate this.
 Require no network changes, and minimal contract changes.
 
 ## Abstract
+
+TODO: this is outdated (we're no longer eip-1077 compliant, and the need of meta-transaction no longer need to be explained in so many words..)
+
 Communicating with dapps currently requires paying ETH for gas, which limits dapp adoption to ether users. 
 Therefore, contract owners may wish to pay for the gas to increase user acquisition, or let their users pay for gas with fiat money. 
 Alternatively, a 3rd party may wish to subsidize the gas costs of certain contracts. 
@@ -131,6 +136,25 @@ Implementing a `Paymaster`
   
   These two methods can be used to charge the user in paymaster-specific manner.
   (e.g. transfer some tokens from the user in the `preRelayedCall`, and refund the excess in the `postRelayedCall`) 
+
+
+## Trust model
+
+GSN attempt to define the minimal trust between the various components.
+By "Trust" we mean expect some behaviour that cannot be otherwise enforced.
+A trust is achieved by auditing the code, and verifying that it can't be abused.
+Its easy to trust Forwarder or RelayHub code, as both are un-owned, unmodifiable contracts, so their (audited) code cam be trusted by saving their addresses.
+When trusting an ownable (or upgradeable) contract, we trust the human owner not to do certain things (and keep his credentials safe, to prevent hackers 
+from doing such harmful things)
+
+* A Recipient contract trusts the forwarder contract, to forward requests only if they are signed by the sender, and are not a replay. "Trusting" means accepting the value of msgSender() as the real sender of the transaction.
+  Actually, the forwarder is the only component the recipient contract trust (or even know) of GSN
+  The Recipient exposes an `isTrustedForwarder` method.
+* A Paymaster trusts the forwarder to be "stable" (that is, return the same value when called as off-chain as a view function and on-chain transaction)
+  The paymaster also trusts the RelayHub to call then relayed function and finally `postRelayedCall()` after `preRelayedCall()` returns without revert.
+* The RelayHub only trusts the Penalizer and StakeManager it was initialized with.
+* The sender's trust is on the RelayHub, to manage the transaction: emitting TransactionRelayed is an absolute indication that its transaction was delivered, so the client doesn't really trust other components (such the paymaster)
+* The relayer trusts the paymaster to a certain level (up to "AcceptanceBudget"). Specific known paymasters can be configured by relayer owner.
 
 
 ![Sequence Diagram](https://www.websequencediagrams.com/cgi-bin/cdraw?lz=dGl0bGUgR1NOCnBhcnRpY2lwYW50IGNsaWVudAAGDVJlbGF5XG5Pd25lciBhcyBvd25lcgAQElNlcnYAGwZyZWxheQAxEkh1YiBhcyBodWIAZQ1TdGFrZU1hbmFnAFkGc20Kb3B0IHNldHVwAEQHCgoAbwUtPnNtOiAxLiBzdGFrZUZvckFkZHJlc3MoAGwFKQAZDDIuIGF1dGhvcml6ZUh1YkJ5AIE5BShodWIAHglodWI6IDMuIHJlZ2lzdGVyAIE6CwBJCGh1YgBuBjQuIGlzAIIDBQCBIgcAgTAFZABqDwBNBTUuIGFkZACCLwVXb3JrZXIAgRgHLHcACQUpCmVuZAoAgV0FbWFraW5nIGEgY2FsbABnBS0-AIJ5BjogNi4gZXZlbnQ6AD4LQWRkZWQKCgCDHAYtPgCCYQU6AIJnBkNhbGwKAIJyBQCBUQc3LgAOCwCBPgk4AIEpHgCBagVwACIGIHByZQCDdAVlZAA6CmZvcndhcmRlcgBGBWV4ZWN1dGUKbm90ZSBvdmVyIAASDnZlcmlmeVNpZ1xuAAUGTm9uY2UKADwJLT5yZWNpcACBawY4LiB0YXJnZXQtAIIJBWFjdGl2YXRlIAAaCQCBEQ1wb3N0AIESDGRlABoXAIJIClRyYW5zYWN0aW9uAIFRBwCDBAY&s=rose)
@@ -263,7 +287,6 @@ Note that by "paymaster reject" we count both preRelayedCall's gas usage AND for
 
 Note that if the Relayer's owner knows the Paymaster code and trust it to be "stable" (which also means the trusted Forwrader is "stable"), then it can allow for higher acceptanceBudget
 
-
 2. **AlertingMode**: this is a mechanism to help the relayer mitigate the 2nd unstable case, above: When the relayer detects an event "TransactionRejectedByPaymasterEvent", it knows it is probably because of parallel sending of such transaction. In alerted mode, the relayer waits a random time before sending the transaction. This way, there is a chance that the other relayer that was given this transaction will send it first, and this relayer will be able to see it (on-chain or in the mempool), and avoid re-sending the same TX.
 
 
@@ -284,7 +307,6 @@ We see several types of Paymasters:
 
 5. Pay-with-token - a paymaster that manages the balance of a user, and deduct the transation cost. While the user doesn't need to have ETH, he does need to have the right token, which means need to set an approval for the paymaster to manage it.
 
-
 ## Rationale
 The rationale for the gas stations network design is a combination of two sets of requirements: Easy adoption, and robustness.
 
@@ -299,10 +321,28 @@ Specifically we've considered the following types of attacks:
 
 * Denial-of-service attacks against individual senders, i.e. transactions censorship.
 * Denial-of-service and financial attacks against individual relays.
-* Denial-of-service and financial attacks against individual contracts.
+* Denial-of-service and financial attacks against individual contracts (paymasters).
 * Denial-of-service attacks against the entire network, either by attacking existing entities, or by introducing any number of malicious entities.
 
-#### Attacks and mitigations
+
+### Gas Calculations
+
+GSN attempt to be as gas-neutral as possible. That is, a relayer should be compensated for the actual gas used (it can ask for fee, but should not
+get over-compensated)
+Likewise, a paymaster should be able to estimate the gas to be used so it can perform its own accounting (e.g, charge the user with equivalent tokens)
+In Ethereum method call, a method is given a gas limit, and this gas is used first to make the call (copy params, etc) and then for actual execution.
+However, the gas limit itself is not available for the contract code itself.
+So with GSN, we require the relayer to pass `externalGasLimit` parameter, which should match the gas it was given the `relayCall()`. 
+(This value can't be validated during the transaction itself, but putting a wrong value makes the relayer "penalizeable")
+at any given point during a method call, calling `externalGasLimit-gasleft()` is the total gas usage up to this point, including the cost of making the call (for public function, this includes the cost of putting the transaction on-chain (4gas for each zero byte, 16 for nonzero byte))
+the relayCall calculate the total cost this way, just before refunding the relayer and emitting the final TransactionRelayed.
+Of course, these instructions themselves are outside the gas calculation, so we have "gasOverhead", which is calculated by comparing the estimation to actual gasUsed.
+
+For the Paymaster, we want to calculate the gasUseWithoutPost (its the paymaster's developer job to estimate the gas usasge of the postRelayedCall itself)
+This method is called within an innerRelayedCall, so we had to make the same structure: pass the "externalGasLimit"
+
+
+## Attacks and mitigations
 
 ##### Attack: Relay attempts to censor a transaction by not signing it, or otherwise ignoring a user request.
 Relay is expected to return the signed transaction to the sender, immediately. 
