@@ -157,9 +157,35 @@ from doing such harmful things)
 * The relayer trusts the paymaster to a certain level (up to "AcceptanceBudget"). Specific known paymasters can be configured by relayer owner.
 
 
-![Sequence Diagram](https://www.websequencediagrams.com/cgi-bin/cdraw?lz=dGl0bGUgR1NOCnBhcnRpY2lwYW50IGNsaWVudAAGDVJlbGF5XG5Pd25lciBhcyBvd25lcgAQElNlcnYAGwZyZWxheQAxEkh1YiBhcyBodWIAZQ1TdGFrZU1hbmFnAFkGc20Kb3B0IHNldHVwAEQHCgoAbwUtPnNtOiAxLiBzdGFrZUZvckFkZHJlc3MoAGwFKQAZDDIuIGF1dGhvcml6ZUh1YkJ5AIE5BShodWIAHglodWI6IDMuIHJlZ2lzdGVyAIE6CwBJCGh1YgBuBjQuIGlzAIIDBQCBIgcAgTAFZABqDwBNBTUuIGFkZACCLwVXb3JrZXIAgRgHLHcACQUpCmVuZAoAgV0FbWFraW5nIGEgY2FsbABnBS0-AIJ5BjogNi4gZXZlbnQ6AD4LQWRkZWQKCgCDHAYtPgCCYQU6AIJnBkNhbGwKAIJyBQCBUQc3LgAOCwCBPgk4AIEpHgCBagVwACIGIHByZQCDdAVlZAA6CmZvcndhcmRlcgBGBWV4ZWN1dGUKbm90ZSBvdmVyIAASDnZlcmlmeVNpZ1xuAAUGTm9uY2UKADwJLT5yZWNpcACBawY4LiB0YXJnZXQtAIIJBWFjdGl2YXRlIAAaCQCBEQ1wb3N0AIESDGRlABoXAIJIClRyYW5zYWN0aW9uAIFRBwCDBAY&s=rose)
+### Penalization
 
-The process of registering/refreshing a `Relayer`:
+Some of the attacks on a relayed call can't be check directly in the contract, but can be checked after-the-fact.
+In order to prevent relayers to abuse the protocol, we provide a "penalization" mechanism in which relayers watchdog the behaviour of other relayers.
+In order to incentivise relayers to make these calls, they get half the stake of the penalized relayer. 
+The other half of the stake is burnt, so that a relayer will not attempt to perform an abusive operation, and immediately "prenalize" itself to redeem its entire stake.
+
+A relayer is "penalizeable" if any of its workers submits a transaction which violates one of the rules below:
+- It fills the externalGasLimit parameter with a value that differ from the actual gasLimit of the transaction
+- It submits 2 different transactions using the same nonce. The only difference that is allowed is raising the gas price of an already-submitted transaction.
+- A relayer attempts any transcation that is not "relayCall" to the RelayHub. 
+
+  Note that this implies that when un-staking a relayer, you can only redeem the leftover eth from a worker address AFTER unstaking the relayer, since
+  that "transfer" operation is also "penalizeable"
+
+The penalization check is triggered by a client sending the received transaction to a selected (or random) relayer. 
+The client has an incentive that its own relayer will submit the correct transaction. 
+The selected relayer has an incentive to check the transaction since it might receive the stake.
+Penalization can only be done to a RelayHub that is authorized on the StakeManager, or during "unstakeDelay" after unauthorizeHub. 
+
+## Protocol Flows
+
+![Sequence Diagram](https://www.websequencediagrams.com/cgi-bin/cdraw?lz=dGl0bGUgR1NOCnBhcnRpY2lwYW50IGNsaWVudAAGDVJlbGF5XG5Pd25lciBhcyBvd25lcgAQElNlcnYAGwZyZWxheQAxEkh1YiBhcyBodWIAZQ1TdGFrZU1hbmFnAFkGc20AgQQNUGF5bWFzdAB1BnAADg5Gb3J3YXJkAIERBmYABQgAgS4PY2lwaWVudFxuQ29udHJhY3QAgR0GABAHCm9wdCBzZXR1cACBMAcKCgCBWwUtPnNtOiAxLiBzdGFrZUZvckFkZHJlc3MoAIFYBSkAGQwyLiBhdXRob3JpemVIdWJCeQCCJQUoaHViAB4JaHViOiAzLiByZWdpc3RlcgCCJgsASQhodWIAbgZpcwCCbAUAggsHAIIZBWRcbgBpDwBMBTQuIGFkZACDGgVXb3JrZXIAgRcHLHcACQUpCmVuZAoAgVwFbWFraW5nIGEgY2FsbABmBS0-AINkBjogNS4gZXZlbnQ6AD4LQWRkZWQKCgCEBwYtPgCDTAU6AINSBkNhbGwKAINdBQCBUAc2LgAOCwCBHycAgWgFcG06IDcuICBwcmUAhF4FZWQAOQoAg0QJOiA4LiBleGVjdXRlCm5vdGUgb3ZlcgCDYwo6IDkuIHZlcmlmeVNpZ1xuAAUGTm9uY2UKAIQJCS0-AINnCTogMTAuIHRhcmdldC0AggkFYWN0aXZhdGUAhAkLAIEWCTExLiBwb3N0AIEUDGRlABsXAIJJCjEyLiBUcmFuc2FjdGlvbgCBVwcAgwkG&s=rose)
+
+<!--
+  Editable link:
+  https://www.websequencediagrams.com/?lz=dGl0bGUgR1NOCnBhcnRpY2lwYW50IGNsaWVudAAGDVJlbGF5XG5Pd25lciBhcyBvd25lcgAQElNlcnYAGwZyZWxheQAxEkh1YiBhcyBodWIAZQ1TdGFrZU1hbmFnAFkGc20AgQQNUGF5bWFzdAB1BnAADg5Gb3J3YXJkAIERBmYABQgAgS4PY2lwaWVudFxuQ29udHJhY3QAgR0GABAHCm9wdCBzZXR1cACBMAcKCgCBWwUtPnNtOiAxLiBzdGFrZUZvckFkZHJlc3MoAIFYBSkAGQwyLiBhdXRob3JpemVIdWJCeQCCJQUoaHViAB4JaHViOiAzLiByZWdpc3RlcgCCJgsASQhodWIAbgZpcwCCbAUAggsHAIIZBWRcbgBpDwBMBTQuIGFkZACDGgVXb3JrZXIAgRcHLHcACQUpCmVuZAoAgVwFbWFraW5nIGEgY2FsbABmBS0-AINkBjogNS4gZXZlbnQ6AD4LQWRkZWQKCgCEBwYtPgCDTAU6AINSBkNhbGwKAINdBQCBUAc2LgAOCwCBHycAgWgFcG06IDcuICBwcmUAhF4FZWQAOQoAg0QJOiA4LiBleGVjdXRlCm5vdGUgb3ZlcgCDYwo6IDkuIHZlcmlmeVNpZ1xuAAUGTm9uY2UKAIQJCS0-AINnCTogMTAuIHRhcmdldC0AggkFYWN0aXZhdGUAhAkLAIEWCTExLiBwb3N0AIEUDGRlABsXAIJJCjEyLiBUcmFuc2FjdGlvbgCBVwcAgwkG&s=rose
+-->
+#### The process of registering/refreshing a `Relayer`:
 
 * Relayer starts listening as a web app (or on some other communication channel).
 * If starting for the first time (no key yet), generate a key pair for Relayer's **manager** and **worker** addresses.
@@ -179,7 +205,7 @@ The process of winding a `Relayer` down:
 * Once the owner's unstake delay is over, owner calls `RelayHub.unstake()`, and withdraws the stake.
 * The relayer should stop the `Relay` shuts down.
 
-The process of moving `Relayer` to a new RelayHub:
+#### The process of moving `Relayer` to a new RelayHub:
 
 * The same RelayManager (but not relay workers!) can be used by multiple Hubs (e.g, when switching to a new hub version, and relay owner
   would like to give service through both the old hub and new hub, without requiring to add new stake.
@@ -190,21 +216,24 @@ The process of moving `Relayer` to a new RelayHub:
 * Only after this countdown is over, it will transfer the eth balance of the relay workers to the manager (before the time, the "transfer eth" operation balance can cause the relayer to be penalizeable)
 * The client lookup mechanism filters out relayers for which a "HubUnauthorized" event was sent
 
-The process of sending a relayed transaction:
+#### The process of sending a relayed transaction:
 
 * `Sender` selects a live `Relay` from RelayHub's list by looking at events from `RelayHub` in the past `lookup window`.
    Each relayer address is saved once (that is, a relayer is considred "active" regardless of how many requests it had 
    processed within the lookup window)
+   - This ping returns the relayer manager, worker, minGasPrice.
 * The sender may maintain a list of "preferred relayers". These are always moved to the beginning of the list and tried 
   first, before other relayers (i.e probably dapp-owned relayers)
 * The sender may sort relayers based on its own criteria. Selection may be based on a mix of:
-    * Relay published transaction fees.
-    * Relay stake size and lock-up time.
-    * Recent relay transactions (visible through `TransactionRelayed` events from `RelayHub`).
+    * Relayer published transaction fees.
+    * Relayer stake size and lock-up time.
+    * Relayer minGasPrice (filter out relayers that require higher gasprice) 
+    * Recent relayer transactions (visible through `TransactionRelayed` events from `RelayHub`).
     * Optionally, reputation/blacklist/whitelist held by the sender app itself, or its backend, on per-app basis (not part of the gas stations network).
 * The Default sorting algorithm is:
     * preferred relays are always first, in their order from the configuration file.
     * sort relayers by calculated fee (for this transaction) 
+    * filter out relayers with high "minGasPrice"
     * downscore (move to the end of the list) relays that failed this client (see below)
 * To select a relayer to use from the list, the client:
     * Pick the next 3 relayers (without mixing "preferred" with normal relayers)
