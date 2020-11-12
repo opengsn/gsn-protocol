@@ -22,7 +22,7 @@ Require no network changes, and minimal contract changes.
 
 ## Abstract
 
-TODO: this is outdated (we're no longer eip-1077 compliant, and the need of meta-transaction no longer need to be explained in so many words..)
+TODO: this is outdated (we're no longer eip-1077 compliant, and the need of meta-transaction no longer need to be explained in so many words..)  [YW: indeed, this section needs to be rewritten.  Not just the EIP-1077 references but also things such as a single public contract, which is no longer the case.]
 
 Communicating with dapps currently requires paying ETH for gas, which limits dapp adoption to ether users. 
 Therefore, contract owners may wish to pay for the gas to increase user acquisition, or let their users pay for gas with fiat money. 
@@ -64,7 +64,7 @@ In particular
 * `Client` or `Sender` - an external account that attempt to make a call, without paying for gas
 * `RelayRecipient` - the contract that receives the relayed call from the client.
 * `Relayer` - a server that relays the request from the client to the recipient. 
-    The relayer pays for the gas, but ultimately gets reimbursed for it (with a fee) from a Paymaster.
+    The relayer pays for the gas, but ultimately gets reimbursed for it (with a fee) by a Paymaster.
 * `Paymaster` - a contract that pays for the actual transaction to the Relayer.
 * `RelayHub` - a singleton that mediates the calls.
 * `Forwarder` - a component to validate user's request, by checking the signature and nonce of a request.
@@ -73,7 +73,7 @@ In particular
 ### Internal Components
 
 * `StakeManager` - a component of the RelayHub that holds the relayers stakes
-* `Penalizer` - a component of the RelayHub that validates relayer's request - and can slash its stake if it is proven
+* `Penalizer` - a component of the RelayHub that validates relayer's request - and can slash its stake if it is proven that
     the relayer attempted a fraud.
 
 The relayer is built from two (or more) distinct accounts:
@@ -140,37 +140,37 @@ Implementing a `Paymaster`
 
 ## Trust model
 
-GSN attempt to define the minimal trust between the various components.
+GSN attempts to define the minimal trust between the various components.
 By "Trust" we mean expect some behaviour that cannot be otherwise enforced.
-A trust is achieved by auditing the code, and verifying that it can't be abused.
-Its easy to trust Forwarder or RelayHub code, as both are un-owned, unmodifiable contracts, so their (audited) code cam be trusted by saving their addresses.
+Trust is achieved by auditing the code, and verifying that it can't be abused.
+Its easy to trust Forwarder or RelayHub code, as both are un-owned, unmodifiable contracts, so their (audited) code can be trusted by saving their addresses.
 When trusting an ownable (or upgradeable) contract, we trust the human owner not to do certain things (and keep his credentials safe, to prevent hackers 
 from doing such harmful things)
 
 * A Recipient contract trusts the forwarder contract, to forward requests only if they are signed by the sender, and are not a replay. "Trusting" means accepting the value of msgSender() as the real sender of the transaction.
-  Actually, the forwarder is the only component the recipient contract trust (or even know) of GSN
+  The Forwarder is the only GSN component that the Recipient contract knows and trusts.
   The Recipient exposes an `isTrustedForwarder` method.
 * A Paymaster trusts the forwarder to be "stable" (that is, return the same value when called as off-chain as a view function and on-chain transaction)
-  The paymaster also trusts the RelayHub to call then relayed function and finally `postRelayedCall()` after `preRelayedCall()` returns without revert.
+  The paymaster also trusts the RelayHub to call the relayed function and finally `postRelayedCall()` after `preRelayedCall()` returns without reverting.
 * The RelayHub only trusts the Penalizer and StakeManager it was initialized with.
 * The sender's trust is on the RelayHub, to manage the transaction: emitting TransactionRelayed is an absolute indication that its transaction was delivered, so the client doesn't really trust other components (such the paymaster)
-* The relayer trusts the paymaster to a certain level (up to "AcceptanceBudget"). Specific known paymasters can be configured by relayer owner.
+* The relayer trusts the paymaster to a certain level (up to "AcceptanceBudget"). Specific known paymasters can be configured by the relayer owner.
 
 
 ### Penalization
 
-Some of the attacks on a relayed call can't be check directly in the contract, but can be checked after-the-fact.
-In order to prevent relayers to abuse the protocol, we provide a "penalization" mechanism in which relayers watchdog the behaviour of other relayers.
+Some of the attacks on a relayed call can't be checked directly in the contract, but can be observed and proven after-the-fact.
+In order to prevent relayers from abusing the protocol, we provide a "penalization" mechanism in which relayers watchdog the behaviour of other relayers.
 In order to incentivise relayers to make these calls, they get half the stake of the penalized relayer. 
-The other half of the stake is burnt, so that a relayer will not attempt to perform an abusive operation, and immediately "prenalize" itself to redeem its entire stake.
+The other half of the stake is burnt, so that a relayer will not attempt to perform an abusive operation, and immediately "penalize" itself to redeem its entire stake.
 
 A relayer is "penalizeable" if any of its workers submits a transaction which violates one of the rules below:
-- It fills the externalGasLimit parameter with a value that differ from the actual gasLimit of the transaction
+- It fills the externalGasLimit parameter with a value that differ from the actual gasLimit of the transaction.
 - It submits 2 different transactions using the same nonce. The only difference that is allowed is raising the gas price of an already-submitted transaction.
 - A relayer attempts any transcation that is not "relayCall" to the RelayHub. 
 
   Note that this implies that when un-staking a relayer, you can only redeem the leftover eth from a worker address AFTER unstaking the relayer, since
-  that "transfer" operation is also "penalizeable"
+  that "transfer" operation is also "penalizeable". For the same reason, an unstaked relay should never be re-staked with the same address.
 
 The penalization check is triggered by a client sending the received transaction to a selected (or random) relayer. 
 The client has an incentive that its own relayer will submit the correct transaction. 
@@ -209,63 +209,63 @@ Penalization can only be done to a RelayHub that is authorized on the StakeManag
 
 * Relayer's owner (the address that initially funded it) calls `StakeManager.unlockStake(relayManager)`.
 * The StakeManager validates its the actual owner, and it does have a stake.
-* From that point, no transaction can go through this relayer.
+* From that point, no transaction can go through this relayer. At this point the relayer can still be penalized for past offenses.
 * Once the owner's unstake delay is over, owner calls `RelayHub.unstake()`, and withdraws the stake.
 * The relayer should stop the `Relay` shuts down.
 
 #### The process of moving `Relayer` to a new RelayHub:
 
 * The same RelayManager (but not relay workers!) can be used by multiple Hubs (e.g, when switching to a new hub version, and relay owner
-  would like to give service through both the old hub and new hub, without requiring to add new stake.
+  would like to provide service through both the old hub and new hub, without requiring to add new stake.
 * the Relayer is brought up with the new RelayHub (with the registering process above, but without re-staking)
 * When the old RelayHub is no longer in use, the owner should call `StakeManager.unauthorizeHubByOwner(relayManager,relayHub)`
 * The StakeManager will remove the authorization, and the relayManager will no longer be able to process requests by this RelayHub.
 * When receiving the "HubUnauthorized" events, the Relayer will start a countdown of the unstake-delay.
-* Only after this countdown is over, it will transfer the eth balance of the relay workers to the manager (before the time, the "transfer eth" operation balance can cause the relayer to be penalizeable)
+* Only after this countdown is over, it will transfer the eth balance of the relay workers to the manager (before that time, the "transfer eth" operation balance can cause the relayer to be penalizeable)
 * The client lookup mechanism filters out relayers for which a "HubUnauthorized" event was sent
 
 #### The process of sending a relayed transaction:
 
 * `Sender` selects a live `Relay` from RelayHub's list by looking at events from `RelayHub` in the past `lookup window`.
    Each relayer address is saved once (that is, a relayer is considred "active" regardless of how many requests it had 
-   processed within the lookup window)
+   processed within the lookup window).  `Sender` sends a "ping" request to the selected `Relay`.
    - This ping returns the relayer manager, worker, minGasPrice.
 * The sender may maintain a list of "preferred relayers". These are always moved to the beginning of the list and tried 
-  first, before other relayers (i.e probably dapp-owned relayers)
+  first, before other relayers (i.e probably dapp-owned relayers).
 * The sender may sort relayers based on its own criteria. Selection may be based on a mix of:
     * Relayer published transaction fees.
     * Relayer stake size and lock-up time.
-    * Relayer minGasPrice (filter out relayers that require higher gasprice) 
+    * Relayer minGasPrice (filter out relayers that require higher gasprice).
     * Recent relayer transactions (visible through `TransactionRelayed` events from `RelayHub`).
     * Optionally, reputation/blacklist/whitelist held by the sender app itself, or its backend, on per-app basis (not part of the gas stations network).
 * The Default sorting algorithm is:
-    * preferred relays are always first, in their order from the configuration file.
-    * sort relayers by calculated fee (for this transaction) 
-    * filter out relayers with high "minGasPrice"
-    * downscore (move to the end of the list) relays that failed this client (see below)
+    * Preferred relays are always first, in their order from the configuration file.
+    * Sort relayers by calculated fee (for this transaction) .
+    * Filter out relayers with high "minGasPrice".
+    * Downscore (move to the end of the list) relays that previously failed this client (see below).
 * To select a relayer to use from the list, the client:
-    * Pick the next 3 relayers (without mixing "preferred" with normal relayers)
-    * send a "ping" request to all of them.
-    * Verify the RelayManager and RelayHub in that ping response
-    * save the RelayWorker address (used below)
-    * Take the first relayer to answer the ping.
+    * Picks the next 3 relayers (without mixing "preferred" with normal relayers).
+    * Sends a "ping" request to all of them.
+    * Verifies the RelayManager and RelayHub in that ping response.
+    * Saves the RelayWorker address (used below).
+    * Takes the first relayer to answer the ping.
 * Sender prepares the transaction with Sender's address, the recipient address, the actual transaction data, Relay's transaction fee, gas price, gas limit, its current nonce from `Forwarder.nonces`, RelayHub's address, and Relay-worker's address, and then signs it.
 * The Sender makes a view-call to `RelayHub.relayCall()`, to make sure the call is valid, and paymaster agrees to pay.
 * The Sender may also make the explicit verifications:
     * `RelayHub.balances[forwarder]` holds enough ETH to pay Relay's fee.
-    * `RelayWorkder.balance` has enough eth to send the transaction
+    * `RelayWorkder.balance` has enough eth to send the transaction.
 * Sender reads the Relay worker's current `nonce` value and decides on the `max_nonce` parameter.
 * Sender sends the signed transaction and metadata to Relayer's web interface.
 * `Relayer` receives the request, and verify the client's request:
-    * the required gasPrice is acceptable by the relayer (too-low gas price might stall this worker for some time)
-    * the next nonce to use is within "nonce_gap" from the nonce of the last mined transaction of this worker.
+    * The required gasPrice is acceptable by the relayer (too-low gas price might stall this worker for some time).
+    * The next nonce to use is within "nonce_gap" from the nonce of the last mined transaction of this worker.
 * `Relayer` receives the request, and make a view call to `RelayHub.relayCall()`, to verify it will get compensated:
 * The `RelayHub.relayCall` validates (and reverts otherwise) that:
-    * the relay manager is registered and staked.
-    * the sender of the request is indeed a relayWorker of that manager.
-    * the paymaster can pay for the max possible price.
-    * the relayhub provided enough gas to complete the request.
-    * the paymaster's preRelayedCall accepted the call (and didn't revert)
+    * The relay manager is registered and staked.
+    * The sender of the request is indeed a relayWorker of that manager.
+    * The paymaster can pay for the max possible price.
+    * The relayhub provided enough gas to complete the request.
+    * The paymaster's preRelayedCall accepted the call (and didn't revert).
 * If any of Relayer's checks fail, it returns an error to sender, and doesn't proceed.
 * Relayer submits the signed relayCall transaction to the blockchain.
 * Relayer immediately returns the signed relayCall transaction to the sender.  This step is discussed below, in attacks/mitigations.
@@ -284,19 +284,19 @@ Penalization can only be done to a RelayHub that is authorized on the StakeManag
   See discussion in the attacks/mitigations section below.
 * `RelayHub` receives the transaction:
     * Verifies the transaction is sent from a worker of a registered relay, and that's the same worker signed in the transaction.
-    * Verifies the tx.gasPrice is at least as the request gasPrice
-    * Verifies the given acceptanceBudget is above paymaster's acceptanceBudget (since #AcceptanceBudget section
-    * Verifies the transaction is given enough gas to cover all gas limits (preRelayedCall, actual call and postRelayedCall)
-    * Verifies the paymaster can pay for the max possible price of the transaction
-    * Makes a call to `paymaster.preRelayedCall`, to make sure it accepts the request
-      * the paymaster makes sure it trusts the forwarder of the request.
-      * the paymaster then performs its other validations.
+    * Verifies the tx.gasPrice is at least as high as the request gasPrice.
+    * Verifies the given acceptanceBudget is above paymaster's acceptanceBudget (see #AcceptanceBudget section).
+    * Verifies the transaction is given enough gas to cover all gas limits (preRelayedCall, actual call and postRelayedCall).
+    * Verifies the paymaster can pay for the max possible price of the transaction.
+    * Makes a call to `paymaster.preRelayedCall`, to make sure it accepts the request.
+      * The paymaster makes sure it trusts the forwarder of the request.
+      * The paymaster then performs its other validations.
     * In case the paymaster reverts, a "TransactionRejectedByPaymaster" is emitted.
     * The RelayHub sends the transaction to the recipient through the forwarder.
       The forwarder verifies the nonce and signature, and then call the target recipient.
       When passing gas to `Forwrader.execute()`, enough gas is preserved by `RelayHub`, for post-call handling. Recipient may run out of gas, but `RelayHub` never does. 
     * The `Forwarder` verifies the signature of the sender, and that the nonce is correct, and increment the nonce.
-    * The `Forwarder` makes a call to the recipient, after appending the sender's address at the end of the msg.data. This way, the recipient is assumed that when it receives a call through the Forwarder, it knows for sure the `msg.sender` is passed as the last 20 bytes of the **msg.data**.
+    * The `Forwarder` makes a call to the recipient, after appending the sender's address at the end of the msg.data. This way, the recipient can safely assume that when it receives a call through the Forwarder, the `msg.sender` is passed as the last 20 bytes of the **msg.data**.
     * Recipient contract handles the transaction.
     * `RelayHub` calls paymaster's `postRelayedCall`.
     * `RelayHub` checks call's return value of call, and emits `TransactionRelayed(address relay, address from, address to, bytes4 selector, uint256 status, uint256 chargeOrCanRelayStatus)`.
@@ -306,58 +306,60 @@ Penalization can only be done to a RelayHub that is authorized on the StakeManag
   Any other modification to the transaction is not allowed, and is considered a violation of the protocol, for which the relayer will get penalized.
   Note that without boosting it, the relayWorker is blocked, and can't send other transactions.
 
-### Handling of "unstable" transaction
+### Handling of "unstable" transactions
 
 The GSN protocol is based on an assumption of the client (and then of the relayer) that running a transaction in view mode will get the same result as running it on-chain.
-The relayer trusts that if the view call succeeds, its OK to put it on-chain and it will be refunded (by the paymaster) for its cost (+fee)
+The relayer trusts that if the view call succeeds, its OK to put it on-chain and it will be refunded (by the paymaster) for its cost (+fee).
 However, it is possible to write contracts (paymaster or recipient) that will cause a transaction to be "unstable", and thus succeed off-chain and later fail on-chain. In such a case, the relayer will suffer a loss of funds.
 The RelayHub emits `TransactionRejectedByPaymasterEvent` event in this case - but it can't tell whether it was because of the client, the paymaster or the relayer itself.
 That is, a relayer can tell it wasn't itself to cause it - but it can't say so on events emitted by other relayers.
 
 Examples of such "unstable" cases (but definitely not the only cases):
 1. require(block.number % 1 == 0) - this naive code will "randomly" fail.
-2. parallel sending the same transaction to multiple relays at the same time: obviously, one will succeed, and the other swill fail
-  (since the sender's nonce in the forwarder was modified by the first call) 
-  This attack can be done by a client without direct help of a paymaster (that is, a client attacks the paymaster and relayer)
-  A paymaster can mitigate it by using off-chain mechanism to blacklist offending clients (see "Off-chain verification" below)
+2. Parallel sending the same transaction to multiple relays at the same time: obviously, one will succeed, and the other swill fail
+  (since the sender's nonce in the forwarder was modified by the first call) .
+  This attack can be performed by a client without direct help of a paymaster (that is, a client attacks the paymaster and relayer).
+  A paymaster can mitigate it by using off-chain mechanism to blacklist offending clients (see "Off-chain verification" below).
 
-Note that in either case, the attack is not "free": in the first case, there is a chance that it gets through anyway. In the latter case, one transaction gets paid, so the attack "cost" is higher than the actual damage to each relayer (though total attack on all relayers can be higher)
+Note that in either case, the attack is not "free": in the first case, there is a chance that it gets through anyway. In the latter case, one transaction gets paid, so the attack "cost" is higher than the actual damage to each relayer (though total attack on all relayers can be higher).
 
-The mitigation mechanisms below take into account the fact that such "unstable" transaction might occur without any real attack on the network - though they should be rare (e.g. a client connection to a relayer times out, and it re-send the request through another relayer. I
-t is possible that both requests will be put on chain, and thus one might see it as an "attack")
+The mitigation mechanisms below take into account the fact that such "unstable" transaction might occur without any real attack on the network - though they should be rare (e.g. a client connection to a relayer times out, and it re-send the request through another relayer. 
+It is possible that both requests will be put on chain, and thus one might see it as an "attack")
 
 The GSN protocol contains several mechanisms to mitigate such cases:
 1. **AcceptanceBudget**: For any given transaction, the Relayer risks at most "acceptanceBudget" of gas, and it is guaranteed to be refunded for paymaster rejects with higher gas usage.
   The Paymaster advertises (through Paymaster.getLimits()) its acceptanceBudget. 
-  The default of 150k is enough for most but extreme cases (such as zero-knowledge-based mixers)
+  The default of 150k is enough for most but extreme cases (such as zero-knowledge-based mixers).
 
   Note that by "paymaster reject" we count both preRelayedCall's gas usage AND forwarder's check for signature and nonce.
   Since forwarder's checks take \~30kgas, the default preRelayedCallGasLimit was set to 100k, so that the sum of both are below the 150kgas acceptanceBudget 
-  (and will stay so even if opcode gas usage will be modified)
+  (and will stay so even if opcode gas usage will be modified).
 
-  Note that if the Relayer's owner knows the Paymaster code and trust it to be "stable" (which also means the trusted Forwrader is "stable"), 
+  Note that if the Relayer's owner knows the Paymaster code and trust it to be "stable" (which also means the trusted Forwarder is "stable"), 
   then it can allow for higher acceptanceBudget.
-  This is done by adding the paymaster's address to the "**trustedPaymasters**" list in the relayer's configuratio
+  This is done by adding the paymaster's address to the "**trustedPaymasters**" list in the relayer's configuration.
 
-2. **AlertedMode**: this is a mechanism to help the relayer mitigate the 2nd unstable case, above: 
+2. **AlertedMode**: this is a mechanism to help the relayer mitigate the 2nd unstable case above: 
   
   When the relayer detects an event "TransactionRejectedByPaymasterEvent", it knows it is probably because of parallel sending of such transaction. In alerted mode, the relayer waits a random time before sending the transaction. This way, there is a chance that the other relayer that was given this transaction will send it first, and this relayer will be able to see it (on-chain or in the mempool), and avoid re-sending the same TX.
 
-  TODO: this assumes we can either run relayCall on 
+  TODO: this assumes we can either run relayCall on [YW: Incomplete sentence.  But does it pertain to our recent discussion?  IIUC you verified that running it on `pending` achieves that.]
   The relayer will exit "alerted" mode after a preconfigured time without any rejected transaction.
 
-  This does not remove complete the chance of parallel transactions, but reduce it, hence make the attack more expensive (the transaction gets paid, 
-  and "griefs" fewer relayers)
+  This does not entirely eliminate the chance of parallel transactions, but reduces it, hence makes the attack more expensive (the transaction gets paid, 
+  and "griefs" fewer relayers).
 
 3. **Paymaster Reputation**: This is a stronger mechanism that let a relayer learn over time which paymasters are trusted.
   - A new paymaster is given a reputation of "1"
-  - For each relayed transaction the relayer increase the reputation of a paymaster
-  - For each failed transaction, the relayer reduces the reputation of the paymaster
-  - reputation<5 throttles requests at 1 per minute (i.e, no new tx until previous one confirmed on chain)
-  - reputation is maxed at 50
-  - if reputation drops 20% within a time-window (e.g. 1 hour), the paymaster is blocked for 
+  - For each relayed transaction the relayer increases the reputation of a paymaster.
+  - For each failed transaction, the relayer reduces the reputation of the paymaster.
+  - Reputation<5 throttles requests at 1 per minute (i.e, no new tx until previous one confirmed on chain).
+  - Reputation is maxed at 50.
+  - If reputation drops 20% within a time-window (e.g. 1 hour), the paymaster is blocked for 
     1 day, and reputation is dropped to zero.
-  - if reputation drops below -2 (=3 failures), the paymaster is blocked for 1 day
+  - If reputation drops below -2 (=3 failures), the paymaster is blocked for 1 day.
+  
+  [YW: May be worth explaining the general idea that relays should only serve paymasters as long as they generate profit rather than loss.  Losing money on some rare transactions is ok, as long as the paymaster generates overall profit rather than loss.  The above reputation is one way to achieve that.  We discussed others, but the general idea is that paymasters need to generate profit for relays.]
 
 
 ## Types of Paymasters
@@ -369,13 +371,13 @@ We see several types of Paymasters:
 1. Test-Only EverythingAccepted - the most naive paymaster, which simply accept requests. 
   It can only be used on testnets, as it will be immediately grief by wily hackers.
 
-2. Whitelisting - In case the senders are known, the paymaster can whitelist the sender addresses it accepts. This is good if you already have an on-chain repository of known addresses (e.g, a DAO may pay for voting by the DAO participants)
+2. Whitelisting - In case the senders are known, the paymaster can whitelist the sender addresses it accepts. This is good if you already have an on-chain repository of known addresses (e.g, a DAO may pay for voting by the DAO participants).
 
-3. Off-chain verification - in many cases, an off-chain mechanism for user verification can be used, such as OUath, Email, SMS, Captcha, etc. In this case, the off-chain service will perform a verification, and sign the request. The on-chain Paymaster will receive that signature as `approvalData`. The only thing the on-chain paymaster need is to know what signer addresses it supports.
+3. Off-chain verification - in many cases, an off-chain mechanism for user verification can be used, such as OAuth, Email, SMS, Captcha, etc. In this case, the off-chain service will perform a verification, and sign the request. The on-chain Paymaster will receive that signature as `approvalData`. The only thing the on-chain paymaster needs to know, is what signer addresses it supports.
 
 4. Off-chain payment - a special case of the off-chain verification is "pay for gas": use a payment service (such as stripe or paypal), and sign the request, to be checked by the paymaster.
 
-5. Pay-with-token - a paymaster that manages the balance of a user, and deduct the transation cost. While the user doesn't need to have ETH, he does need to have the right token, which means need to set an approval for the paymaster to manage it.
+5. Pay-with-token - a paymaster that manages the balance of a user, and deducts the transation cost. While the user doesn't need to have ETH, he does need to have the right token, which means that the user needs to set an approval for the paymaster to withdraw from it.
 
 ## Rationale
 
@@ -398,18 +400,18 @@ Specifically we've considered the following types of attacks:
 
 ### Gas Calculations
 
-GSN attempt to be as gas-neutral as possible. That is, a relayer should be compensated for the actual gas used (it can ask for fee, but should not
-get over-compensated)
-Likewise, a paymaster should be able to estimate the gas to be used so it can perform its own accounting (e.g, charge the user with equivalent tokens)
+GSN attempts to be as gas-neutral as possible. That is, a relayer should be compensated for the actual gas used (it can ask for fee, but should not
+get over-compensated).
+Likewise, a paymaster should be able to estimate the gas to be used so it can perform its own accounting (e.g, charge the user with equivalent tokens).
 In Ethereum method call, a method is given a gas limit, and this gas is used first to make the call (copy params, etc) and then for actual execution.
 However, the gas limit itself is not available for the contract code itself.
-So with GSN, we require the relayer to pass `externalGasLimit` parameter, which should match the gas it was given the `relayCall()`. 
+So with GSN, we require the relayer to pass `externalGasLimit` parameter, which should be identical to the gas it has given the `relayCall()`. 
 (This value can't be validated during the transaction itself, but putting a wrong value makes the relayer "penalizeable")
 at any given point during a method call, calling `externalGasLimit-gasleft()` is the total gas usage up to this point, including the cost of making the call (for public function, this includes the cost of putting the transaction on-chain (4gas for each zero byte, 16 for nonzero byte))
 the relayCall calculate the total cost this way, just before refunding the relayer and emitting the final TransactionRelayed.
 Of course, these instructions themselves are outside the gas calculation, so we have "gasOverhead", which is calculated by comparing the estimation to actual gasUsed.
 
-For the Paymaster, we want to calculate the gasUseWithoutPost (its the paymaster's developer job to estimate the gas usasge of the postRelayedCall itself)
+For the Paymaster, we want to calculate the gasUseWithoutPost (its the paymaster's developer job to estimate the gas usasge of the postRelayedCall itself).
 This method is called within an innerRelayedCall, so we had to make the same structure: pass the "externalGasLimit"
 
 ### Relayer throughput.
@@ -418,8 +420,8 @@ In order to support high throughput through GSN, we have 2 mechanisms:
 
 1. **nonceGap**: Clients are aware that its possible that the relayer will relay more than one transaction in a block. 
     That is, even if the last mined relay worker's nonce is "N", the client's transaction might get nonce of "N+3", meaning
-    there are extra 2 transactions net yet mined.
-    The client specifies what is the larger "gap" it allows. The relayer should reject the request if it is unable to fulfil
+    there are extra 2 transactions not yet mined.
+    The client specifies what is the largest "gap" it allows. The relayer should reject the request if it is unable to fulfil
     the client's request of smaller gap than current nonce.
     If the relayer signs the transaction with a higher nonce, it is not penalizeable, but still, the client will move to another 
     relayer to send the TX. 
@@ -430,14 +432,14 @@ In order to support high throughput through GSN, we have 2 mechanisms:
     The relayer should provide an API to the client to return all pending transactions since nonce "N". Using this API, the client
     can validate that its own transaction will get mined in due time, by validating these intermediate transactions:
     - They are all properly signed by the relay worker.
-    - They are all in the mempool (the client may put them into the mempool by itself)
+    - They are all in the mempool (the client may put them into the mempool by itself).
     - The worker has enough gas to submit them all (including the client's transaction)
-    - Their gasPrice is not below the client's gas
+    - Their gasPrice is not below the client's gas.
 
 2. **Multiple workers**: A Single relayer may have multiple worker addresses.
    The RelayHub is configured with the highest number of workers (currently 10).
    Each worker is independent with its nonce (and gas price) management, but they share the same manager stake.
-   Multiple workers reduce the need for large "nonceGap", but can't reduce it completely. That is, a client should expect that sometimes 
+   Multiple workers reduce the need for large "nonceGap", but can't completely eliminate it. That is, a client should expect that sometimes 
    it will receive its signed transaction using a nonce that is higher than current worker nonce, and use the "nonceGap" mechanism above,
    to validate any intermediate transaction.
 
@@ -447,8 +449,8 @@ For GSN2, we opted to use EIP-712 as a method to show the transaction that gets 
 We believe that signing an opaque hex blob is undesired.
 While the current EIP-712 view dialogs don't show much information, we anticipate that in the future, wallet applications will be able
 to show better view for meta-transactions, just like they recognize some normal transactions, such as token transfers and DeFi operations.
-Actually, the ForwardRequest match the 6 fields of an Ethereum transaction - from,to,value,gas,nonce,data
-To these GSN adds the GSN-specific fields, like relaying fee and paymaster.
+Actually, the ForwardRequest matches the 6 fields of an Ethereum transaction - from,to,value,gas,nonce,data
+To these, GSN adds the GSN-specific fields, like relaying fee and paymaster.
 
 
 ## Attacks and mitigations
@@ -456,10 +458,10 @@ To these GSN adds the GSN-specific fields, like relaying fee and paymaster.
 ##### Attack: Relay attempts to censor a transaction by not signing it, or otherwise ignoring a user request.
 Relay is expected to return the signed transaction to the sender, immediately. 
 Sender doesn't need to wait for the transaction to be mined, and knows immediately whether it's request has been served. 
-If a relay doesn't return a signed transaction within few seconds, sender cancels the operation, drops the connection, and switches to another relay. 
+If a relay doesn't return a signed transaction within a few seconds, sender cancels the operation, drops the connection, and switches to another relay. 
 It also marks Relay as unresponsive in its private storage to avoid using it in the near future.
 
-Therefore, the maximal damage a relay can cause with such attack, is a one-time delay of few seconds. After a while, senders will avoid it altogether.
+Therefore, the maximal damage a relay can cause with such attack, is a one-time delay of a few seconds. After a while, senders will avoid it altogether.
 
 ##### Attack: Relay attempts to censor a transaction by signing it, returning it to the sender, but never putting it on the blockchain.
 This attack will backfire and not censor the transaction. 
@@ -467,7 +469,7 @@ The sender can submit the transaction signed by Relay to the blockchain as a raw
 but Relay may be unaware and therefore be stuck with a bad nonce which will break its next transaction.
 
 ##### Attack: Relay attempts to censor a transaction by signing it, but publishing a different transaction with the same nonce.
-Reusing the nonce is the only DoS performed by a Relay, that cannot be detected within few seconds during the http request. 
+Reusing the nonce is the only DoS performed by a Relay, that cannot be detected within a few seconds during the http request. 
 It will only be detected when the malicious transaction with the same nonce gets mined and triggers the `RelayHub.TransactionRelayed` event. 
 However, the attack will backfire and cost Relay its entire stake.
 
