@@ -22,19 +22,18 @@ Require no network changes, and minimal contract changes.
 
 ## Abstract
 
-TODO: this is outdated (we're no longer eip-1077 compliant, and the need of meta-transaction no longer need to be explained in so many words..)  [YW: indeed, this section needs to be rewritten.  Not just the EIP-1077 references but also things such as a single public contract, which is no longer the case.]
-
-Communicating with dapps currently requires paying ETH for gas, which limits dapp adoption to ether users. 
 Therefore, contract owners may wish to pay for the gas to increase user acquisition, or let their users pay for gas with fiat money. 
 Alternatively, a 3rd party may wish to subsidize the gas costs of certain contracts. 
-Solutions such as described in [EIP-1077](https://eips.ethereum.org/EIPS/eip-1077) could allow transactions from addresses that hold no ETH.
 
-The gas stations network is an [EIP-1077](https://eips.ethereum.org/EIPS/eip-1077) compliant effort to solve the problem by creating an incentive for nodes to run gas stations, where gasless transactions can be "fueled up". 
+The gas stations network is an effort to solve the problem by creating an incentive for nodes to run gas stations, where gasless transactions can be "fueled up". 
 It abstracts the implementation details from both the dapp maintainer and the user, making it easy to convert existing dapps to accept "collect-calls".
 
-The network consists of a single public contract trusted by all participating dapp contracts, and a decentralized network of relay nodes (gas stations) incentivized to listen on non-ether interfaces such as web or whisper, 
-pay for transactions and get compensated by that contract. The trusted contract can be verified by anyone, and the system is otherwise trustless. 
-Gas stations cannot censor transactions as long as there's at least one honest gas station. Attempts to undermine the system can be proven on-chain and offenders can be penalized.
+The network consists of a set of public contracts trusted by all participating dapp contracts, and a
+decentralized network of relay nodes (gas stations) incentivized to listen on non-ether interfaces such as web or whisper, 
+pay for transactions and get compensated by a paymaster contract. 
+The trusted contracts can be verified by anyone, and the system is otherwise trustless. 
+Gas stations cannot censor transactions as long as there's at least one honest gas station.
+Attempts to undermine the system can be proven on-chain and offenders can be penalized.
 
 ## Motivation
 
@@ -43,10 +42,10 @@ Gas stations cannot censor transactions as long as there's at least one honest g
       contract (Paymaster).
       Paymasters may implement logic to verify the user's eligibility - or even charge him through other means.
     * Removing the need to interact directly with the blockchain, while maintaining decentralization and censorship-resistance. 
-      Contracts can "listen" on multiple public channels, and users can interact with the contracts through common protocols that are generally permitted even in restrictive environments.
+      Contracts can "listen" on multiple public channels, and users can interact with the contracts through common 
+      protocols that are generally permitted even in restrictive environments.
 * Ethereum nodes get a revenue source without requiring mining equipment. The entire network benefits from having more nodes.
 * No protocol changes required. The gas station network is self-organized via smart contracts, and dapps interact with the network by implementing an interface.
-
 
 ## Design Guidelines
 
@@ -56,7 +55,7 @@ In particular
 * No component should be able to perform an operation on another's behalf (e.g. a client must sign each request, and
     a RelayRecipient contract can be assured a request was actually signed by the client)
 * No component should be able to steal money from other component: e.g., relayer gets paid only if it is guaranteed it
-    delivered a service
+    delivered a service, and paymaster must pay for transactions it approved.
 * No component should be able to "grief" (cause monetarial damage) to other component.
 
 ## Definitions
@@ -69,7 +68,6 @@ In particular
 * `RelayHub` - a singleton that mediates the calls.
 * `Forwarder` - a component to validate user's request, by checking the signature and nonce of a request.
 
-
 ### Internal Components
 
 * `StakeManager` - a component of the RelayHub that holds the relayers stakes
@@ -79,6 +77,7 @@ In particular
 The relayer is built from two (or more) distinct accounts:
 * `RelayManager` - the account the "defines" the relayer (and hold a stake)    
 * `RelayWorker` - actual relayer address that sends a request. a relayer has one or more workers    
+
 ## Specification
 
 Roles of the `Forwarder`:
@@ -147,14 +146,14 @@ Its easy to trust Forwarder or RelayHub code, as both are un-owned, unmodifiable
 When trusting an ownable (or upgradeable) contract, we trust the human owner not to do certain things (and keep his credentials safe, to prevent hackers 
 from doing such harmful things)
 
-* A Recipient contract trusts the forwarder contract, to forward requests only if they are signed by the sender, and are not a replay. "Trusting" means accepting the value of msgSender() as the real sender of the transaction.
+* **A Recipient** contract trusts the forwarder contract, to forward requests only if they are signed by the sender, and are not a replay. "Trusting" means accepting the value of msgSender() as the real sender of the transaction.
   The Forwarder is the only GSN component that the Recipient contract knows and trusts.
   The Recipient exposes an `isTrustedForwarder` method.
-* A Paymaster trusts the forwarder to be "stable" (that is, return the same value when called as off-chain as a view function and on-chain transaction)
+* **A Paymaster** trusts the forwarder to be "stable" (that is, return the same value when called as off-chain as a view function and on-chain transaction)
   The paymaster also trusts the RelayHub to call the relayed function and finally `postRelayedCall()` after `preRelayedCall()` returns without reverting.
-* The RelayHub only trusts the Penalizer and StakeManager it was initialized with.
-* The sender's trust is on the RelayHub, to manage the transaction: emitting TransactionRelayed is an absolute indication that its transaction was delivered, so the client doesn't really trust other components (such the paymaster)
-* The relayer trusts the paymaster to a certain level (up to "AcceptanceBudget"). Specific known paymasters can be configured by the relayer owner.
+* **The RelayHub** only trusts the Penalizer and StakeManager it was initialized with.
+* **The sender's trust** is on the RelayHub, to manage the transaction: emitting TransactionRelayed is an absolute indication that its transaction was delivered, so the client doesn't really trust other components (such the paymaster)
+* **The relayer** trusts the paymaster to a certain level (up to "AcceptanceBudget"). Specific known paymasters can be configured by the relayer owner.
 
 
 ### Penalization
@@ -311,17 +310,25 @@ Penalization can only be done to a RelayHub that is authorized on the StakeManag
 The GSN protocol is based on an assumption of the client (and then of the relayer) that running a transaction in view mode will get the same result as running it on-chain.
 The relayer trusts that if the view call succeeds, its OK to put it on-chain and it will be refunded (by the paymaster) for its cost (+fee).
 However, it is possible to write contracts (paymaster or recipient) that will cause a transaction to be "unstable", and thus succeed off-chain and later fail on-chain. In such a case, the relayer will suffer a loss of funds.
-The RelayHub emits `TransactionRejectedByPaymasterEvent` event in this case - but it can't tell whether it was because of the client, the paymaster or the relayer itself.
+The RelayHub emits `TransactionRejectedByPaymasterEvent` event in this case - but it can't tell whether it was because of the client, 
+the paymaster or the relayer itself.
 That is, a relayer can tell it wasn't itself to cause it - but it can't say so on events emitted by other relayers.
 
+The relayers need a way to detect and mitigate such cases to keep profitable.
+
 Examples of such "unstable" cases (but definitely not the only cases):
-1. require(block.number % 1 == 0) - this naive code will "randomly" fail.
-2. Parallel sending the same transaction to multiple relays at the same time: obviously, one will succeed, and the other swill fail
-  (since the sender's nonce in the forwarder was modified by the first call) .
-  This attack can be performed by a client without direct help of a paymaster (that is, a client attacks the paymaster and relayer).
-  A paymaster can mitigate it by using off-chain mechanism to blacklist offending clients (see "Off-chain verification" below).
+1. `require(block.number % 1 == 0)` - this naive code will "randomly" fail.
+2.  Parallel sending the same transaction to multiple relays at the same time: obviously, one will succeed, and the other swill fail
+    (since the sender's nonce in the forwarder was modified by the first call) .
+    This attack can be performed by a client without direct help of a paymaster (that is, a client attacks the paymaster and relayer).
+   
+    A paymaster can mitigate it by using off-chain mechanism to blacklist offending clients (see "Off-chain verification" below).
 
 Note that in either case, the attack is not "free": in the first case, there is a chance that it gets through anyway. In the latter case, one transaction gets paid, so the attack "cost" is higher than the actual damage to each relayer (though total attack on all relayers can be higher).
+
+The above "parallel sending" can happen in legitimate cases (e.g. a client sends a request but fails to receive a response, so it re-sends
+the request through another relayer) 
+It is assumed that such cases are rare, so a mitigation mechanism should be able to tolerate such cases.
 
 The mitigation mechanisms below take into account the fact that such "unstable" transaction might occur without any real attack on the network - though they should be rare (e.g. a client connection to a relayer times out, and it re-send the request through another relayer. 
 It is possible that both requests will be put on chain, and thus one might see it as an "attack")
@@ -341,15 +348,17 @@ The GSN protocol contains several mechanisms to mitigate such cases:
 
 2. **AlertedMode**: this is a mechanism to help the relayer mitigate the 2nd unstable case above: 
   
-  When the relayer detects an event "TransactionRejectedByPaymasterEvent", it knows it is probably because of parallel sending of such transaction. In alerted mode, the relayer waits a random time before sending the transaction. This way, there is a chance that the other relayer that was given this transaction will send it first, and this relayer will be able to see it (on-chain or in the mempool), and avoid re-sending the same TX.
+  When the relayer detects an event "TransactionRejectedByPaymasterEvent", it knows it is probably because of parallel sending of such transaction.
+  In alerted mode, the relayer waits a random time before sending the transaction.
+  This way, there is a chance that the other relayer that was given this transaction will send it first,
+  and this relayer will be able to see it (on-chain or in the mempool), and avoid re-sending the same TX.
 
-  TODO: this assumes we can either run relayCall on [YW: Incomplete sentence.  But does it pertain to our recent discussion?  IIUC you verified that running it on `pending` achieves that.]
   The relayer will exit "alerted" mode after a preconfigured time without any rejected transaction.
 
   This does not entirely eliminate the chance of parallel transactions, but reduces it, hence makes the attack more expensive (the transaction gets paid, 
   and "griefs" fewer relayers).
 
-3. **Paymaster Reputation**: This is a stronger mechanism that let a relayer learn over time which paymasters are trusted.
+3. **Paymaster Reputation**: This is a stronger mechanism that lets a relayer learn over time which paymasters are trusted.
   - A new paymaster is given a reputation of "1"
   - For each relayed transaction the relayer increases the reputation of a paymaster.
   - For each failed transaction, the relayer reduces the reputation of the paymaster.
@@ -357,9 +366,7 @@ The GSN protocol contains several mechanisms to mitigate such cases:
   - Reputation is maxed at 50.
   - If reputation drops 20% within a time-window (e.g. 1 hour), the paymaster is blocked for 
     1 day, and reputation is dropped to zero.
-  - If reputation drops below -2 (=3 failures), the paymaster is blocked for 1 day.
-  
-  [YW: May be worth explaining the general idea that relays should only serve paymasters as long as they generate profit rather than loss.  Losing money on some rare transactions is ok, as long as the paymaster generates overall profit rather than loss.  The above reputation is one way to achieve that.  We discussed others, but the general idea is that paymasters need to generate profit for relays.]
+  - If reputation drops below -2 (=3 failures), the paymaster is blocked for 1 day - or even completely.
 
 
 ## Types of Paymasters
@@ -475,7 +482,7 @@ However, the attack will backfire and cost Relay its entire stake.
 
 Sender has a signed transaction from Relay with nonce N, and also gets a mined transaction from the blockchain with nonce N, also signed by Relay. 
 This proves that Relay performed a DoS attack against the sender. 
-The sender calls `RelayHub.penalizeRepeatedNonce(bytes transaction1, bytes transaction2)`, which verifies the attack, confiscates Relay's stake, 
+The sender calls `Penalizer.penalizeRepeatedNonce(bytes transaction1, bytes transaction2)`, which verifies the attack, confiscates Relay's stake, 
 and sends half of it to the sender who delivered the `penalizeRepeatedNonce` call. The other half of the stake is burned by sending it to `address(0)`. Burning is done to prevent cheating relays from effectively penalizing themselves and getting away without any loss.
 The sender then proceeds to select a new relay and send the original transaction.
 
@@ -492,8 +499,10 @@ When the sender receives a transaction signed by a Relay he validates that the n
 ##### Attack: Paymaster attempts to burn relays funds by implementing an inconsistent preRelayedCall() and using multiple sender addresses to generate expensive transactions, thus performing a DoS attack on relays and reducing their profitability.
 In this attack, a contract sets an inconsistent preRelayedCall (e.g. revert on even blocks), and uses it to exhaust relay resources through unpaid transactions. 
 Relays can easily detect it after the fact. 
-If a transaction goes unpaid, the relay knows that the Paymaster contract's preRelayedCall has acted inconsistently, because the relay has verified its view function before sending the transaction. 
-It might be the result of a rare race condition where the contract's state has changed between the view call and the transaction, but if it happens too frequently, relays will blacklist this paymaster and refuse to serve transactions to it. 
+If a transaction goes unpaid, the relay knows that the Paymaster contract's preRelayedCall has acted inconsistently, 
+because the relay has verified its view function before sending the transaction. 
+It might be the result of a rare race condition where the contract's state has changed between the view call and the transaction, 
+but if it happens too frequently, relays will blacklist this paymaster and refuse to serve transactions to it. 
 Each offending paymaster can only cause a small damage (e.g. the cost of 2-3 transactions) to a relay, before getting blacklisted.
 
 Relays may also look at paymaster's history on the blockchain, looking for past unpaid transactions (reverted by RelayHub without pay), and denying service to contracts with a high failure rate. 
