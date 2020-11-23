@@ -459,6 +459,65 @@ to show better view for meta-transactions, just like they recognize some normal 
 Actually, the ForwardRequest matches the 6 fields of an Ethereum transaction - from,to,value,gas,nonce,data
 To these, GSN adds the GSN-specific fields, like relaying fee and paymaster.
 
+### Future Upgrade support. 
+
+The GSN contracts are by design un-upgradeable in-place: A user (whether its a relayer, paymaster or recipient contract) trusts existing code to stay without modification).
+Still, we foresee that in the future some contracts might need to be updated, and thus we should
+plan ahead to support such upgrades.
+
+##### General Upgrade Flows
+(actual details are in the following sections)
+- New contracts are deployed.
+- Stakeholders (relay operators, paymaster creators) review those new contracts, and decide if they
+  want to support them. Note that they are free to continue and work with old RelayHubs.
+  By "support" it might either mean just adding those addresses, or might require code modifications.
+- Relayers may support transactions sent for old and new relay-hubs
+- Clients rely on Paymasters to select the appropriate network (=RelayHub) for them, and thus 
+  if a paymaster uses a new relayhub, the clients are switched too, if they can support that RelayHub version.
+  Paymasters should take care not to switch to a new RelayHub in-place if some clients cannot support it.
+  [YW: We had prior discussions and I think we agreed that a paymaster shouldn't switch to a new hub, but add a supported hub, in order not to break old clients that can't be upgraded.  If a paymaster starts relying on a new and incompatible hub, it may be better to deploy a new paymaster and not mess with the old one.]
+- Over time, when traffic of old relayhub dwindles, relays might opt to stop its support.  
+
+##### StakeManager
+
+The StakeManager was built to be as simple as possible, since this is the contract that controls the stakes.
+It is built so that relayers won't need new stakes in order to support newly deployed relayer.
+A change in the StakeMaanger will require a new set of contracts and relayers and new stakes in the new StakeManager.
+This will put a burden on relayer owners, to have new stakes if they want to support both new and old RelayHubs during the transition.
+
+##### Deprecating old RelayHubs
+
+Since the RelayHub is an un-owned contract, there is no way to deprecate it or force relayers not to support it.
+Still, in order to incentivise relayers and clients to use latest relayer version, we will introduce a mechanism to allow 
+*OpenGSN consortium* to "deprecate" a RelayHub,
+by making all transactions burn half the fee - this makes it less profitable for the relayer (or force the relayers to double the fee, which makes them less profitable for clients).  [YW: I think the mechanism we discussed was a bit different.  When a hub is considered deprecated (a certain period of time after it is notified that it is no longer the latest), it increases the fees but doesn't give the increased amount to the relays.  The relay still gets compensated with its usual fee, so it is incentivized to keep supporting the old hub, as long as the market is willing to pay for it.  The increase amount is used to subsidize fees on the latest hub, so non-upgraders end up subsidizing upgraders.  This aligns the incentives better.  Relays are incentivized to keep the service alive as long as there's demand, dapps are incentivized to upgrade in order to reduce their fees, but the network remains reliable for dapps that cannot be upgraded (at increased cost).  Any reason not to use that?]
+
+In either case, Paymasters and clients are incentivised to move to the new RelayHub to pay less fees, and thus relayers will also add support for the new RelayHub.
+
+(There's no real requirement for relayers to stop supporting old RelayHubs as long as there is still some traffic there)
+
+##### Bugfixes on RelayHub
+
+In case the RelayHub (or Penalizer) need to be updated without changing the API, the process is as follows:
+
+1. A new RelayHub is deployed (possibly with a new Penalizer), using the same StakeManager.
+2. The relayer owner should call `StakeManager.authorizeHub` for the new RelayHub (probably after auditing its new code).
+3. The Relayer adds workers (no need to re-stake: its the same stake manager) - worker addresses can't be shared between RelayHubs.
+4. The relayer now can handle requests on both RelayHubs.
+5. At any point, the owner may unregister any relayHub, and after unstake delay, withdraw the remaining eth in the worker accounts.
+   Unlocking the stake on the StakeManager is equivalent to unregistering the relayer from all RelayHubs.
+6. A paymaster MAY support multiple RelayHubs, but probably after such upgrades, 
+   paymasters will stop working with the old hub [YW: Sounds risky to me. Even if the API hasn't changed, something did change, and it might break clients. Since there's no easy way to test it before upgrading, I'd prefer to add the new hub without removing the old one, and have clients try to use the latest, but fall back to the previous version if something goes wrong.], and only use the new hub
+   (current Paymaster implementation only support a single relayhub).   
+
+#### API change update
+
+There are 2 possible API changes:
+- Relayer-RelayHub api change (requires a new relayer, and possibly a new client SDK [YW: We shouldn't mandate client SDK upgrade if the new API only affects the relay.  Clients may be the hardest to upgrade in some cases, such as an unmaintained mobile app.]).
+- RelayHub-Paymaster API change.
+
+[YW: The general approach with API changes should be to use new addresses for paymasters, and have each paymaster announce (with a view function) the supported client version.  New clients will have the address of the latest paymaster.  Old clients will keep using the old paymaster, which probably also uses an old hub.]
+
 
 ## Attacks and mitigations
 
